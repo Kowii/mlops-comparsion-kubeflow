@@ -1,0 +1,55 @@
+# dataset config for https://www.kaggle.com/datasets/iammustafatz/diabetes-prediction-dataset
+data:
+  raw_path: "data/raw/diabetes.csv"
+  processed_path: "data/processed/diabetes.parquet"
+  required_columns:
+    gender: "object"
+    age: "float64"
+    hypertension: "int64"
+    heart_disease: "int64"
+    smoking_history: "object"
+    bmi: "float64"
+    HbA1c_level: "float64"
+    blood_glucose_level: "int64"
+    diabetes: "int64"
+  target_column: "diabetes"
+  remove_empty: True
+  imputer_num: "median"
+  imputer_cat: "most_frequent"
+  transformer_path: "artifacts/transformer.joblib"
+  scaled_columns:
+    - age
+    - bmi
+    - HbA1c_level
+    - blood_glucose_level
+  onehot_columns:
+    - gender
+    - smoking_history
+  binary_columns:
+    - hypertension
+    - heart_disease
+train:
+  test_size: 0.2
+  random_state: 42
+  algorithm: "lgreg"
+  n_estimators: 100
+  max_depth: 5
+  scale_pos_weight: 9
+  min_recall: 0.7
+  min_accuracy: 0.3
+  class_weight:
+    0: 1
+    1: 11
+
+model:
+  path: "artifacts/model.joblib"
+  name: "diabetes prediction model"
+  input_schema:
+    gender: "str"
+    age: "float"
+    hypertension: "int"
+    heart_disease: "int"
+    smoking_history: "str"
+    bmi: "float"
+    HbA1c_level: "float"
+    blood_glucose_level: "int"

@@ -1,0 +1,5 @@
+/data/
+/artifacts/
+/.idea/
+/__pycache__/
+.env

@@ -1,0 +1,13 @@
+joblib
+scikit-learn
+pandas
+PyYAML
+pyarrow
+xgboost
+fastapi
+uvicorn
+pydantic
+kfp
+kfp[kubernetes]
+s3fs
+python-dotenv
