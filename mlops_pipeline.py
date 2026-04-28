@@ -1,6 +1,6 @@
 # mlops_pipeline.py
 
-import data_component, train_component
+import data_component, train_component, deploy_component
 from kfp.dsl import pipeline
 from kfp import kubernetes
 
@@ -9,7 +9,10 @@ from kfp import kubernetes
     description="E2E pipeline for training classification model"
 )
 def mlops_pipeline(
-        config_path: str = "s3://mlops-config/config.yaml"
+        config_path: str = "s3://mlops-config/config.yaml",
+        pipeline_n_estimators: int = 0,
+        pipeline_max_depth: int = 0,
+        pipeline_algorithm: str = ""
 ):
     # etap przygotowania danych
     data_prep_task = data_component.prepare(
@@ -24,8 +27,12 @@ def mlops_pipeline(
     # etap trenowania modelu
     model_train_task = train_component.train(
         config_path=config_path,
-        input_dataset=data_prep_task.outputs['output_dataset']
+        input_dataset=data_prep_task.outputs['output_dataset'],
+        override_n_estimators=pipeline_n_estimators,
+        override_max_depth=pipeline_max_depth,
+        override_algorithm=pipeline_algorithm
     )
+    model_train_task.after(data_prep_task)
     kubernetes.use_secret_as_env(
         task=model_train_task,
         secret_name='s3-credentials',
@@ -33,6 +40,10 @@ def mlops_pipeline(
                            'S3_ENDPOINT_URL': 'S3_ENDPOINT_URL'}
     )
 
+    deploy_task = deploy_component.deploy_model(
+        model_uri=model_train_task.outputs['output_model'].path
+    )
+    deploy_task.after(model_train_task)
 
 if __name__ == '__main__':
     from kfp.compiler import Compiler

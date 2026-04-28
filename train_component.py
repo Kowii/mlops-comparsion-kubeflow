@@ -10,7 +10,10 @@ def train(
         config_path: str,
         input_dataset: dsl.Input[dsl.Dataset],
         output_model: dsl.Output[dsl.Model],
-        kfp_metrics: dsl.Output[dsl.Metrics]
+        kfp_metrics: dsl.Output[dsl.Metrics],
+        override_n_estimators: int = 0,
+        override_max_depth: int = 0,
+        override_algorithm: str = ""
 ):
     """
     Conducts model training and exports trained model
@@ -37,7 +40,17 @@ def train(
     def _load_config(path: str) -> dict:
         fs = s3fs.S3FileSystem(**storage_options)
         with fs.open(path, 'r') as f:
-            return yaml.safe_load(f)
+            config = yaml.safe_load(f)
+        if override_n_estimators > 0:
+            config["train"]["n_estimators"] = override_n_estimators
+            print(f"Overridden n_estimators: {override_n_estimators}")
+        if override_max_depth > 0:
+            config["train"]["max_depth"] = override_max_depth
+            print(f"Overridden max_depth: {override_max_depth}")
+        if override_algorithm != "":
+            config["train"]["algorithm"] = override_algorithm
+            print(f"Overridden algorithm: {override_algorithm}")
+        return config
 
     # podział danych
     def split_data(config: dict, data: pd.DataFrame):
