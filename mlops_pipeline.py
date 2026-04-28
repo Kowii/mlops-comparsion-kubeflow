@@ -40,7 +40,7 @@ def mlops_pipeline(
                            'S3_ENDPOINT_URL': 'S3_ENDPOINT_URL'}
     )
 
-    deploy_task = deploy_component.deploy_model(
+    deploy_task = deploy_component.deploy(
         model_uri=model_train_task.outputs['output_model'].path
     )
     deploy_task.after(model_train_task)
