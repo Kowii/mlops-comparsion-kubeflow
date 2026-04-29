@@ -1,7 +1,6 @@
 # dataset config for https://www.kaggle.com/datasets/iammustafatz/diabetes-prediction-dataset
 data:
-  raw_path: "data/raw/diabetes.csv"
-  processed_path: "data/processed/diabetes.parquet"
+  raw_path: "s3://mlops-data/diabetes.csv"
   required_columns:
     gender: "object"
     age: "float64"
@@ -16,7 +15,6 @@ data:
   remove_empty: True
   imputer_num: "median"
   imputer_cat: "most_frequent"
-  transformer_path: "artifacts/transformer.joblib"
   scaled_columns:
     - age
     - bmi
