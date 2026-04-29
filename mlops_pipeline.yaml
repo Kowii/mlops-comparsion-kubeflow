@@ -115,20 +115,23 @@ deploymentSpec:
           \          \"name\": model_name,\n            \"namespace\": namespace,\n\
           \            \"annotations\": {\n                \"serving.kserve.io/secretKey\"\
           : \"s3-credentials\"\n            }\n        },\n        \"spec\": {\n \
-          \           \"predictor\": {\n                \"sklearn\": {\n         \
-          \           \"storageUri\": storage_uri\n                }\n           \
-          \ }\n        }\n    }\n\n    print(f\"Deploying model {model_name} from\
-          \ {storage_uri} to KServe...\")\n\n    try:\n        api.create_namespaced_custom_object(\n\
-          \            group=\"serving.kserve.io\",\n            version=\"v1beta1\"\
-          ,\n            namespace=namespace,\n            plural=\"inferenceservices\"\
-          ,\n            body=inference_service,\n        )\n        print(\"KServe\
-          \ InferenceService created successfully.\")\n    except Exception as e:\n\
-          \        print(f\"Service might exist, trying to patch: {e}\")\n       \
-          \ api.patch_namespaced_custom_object(\n            group=\"serving.kserve.io\"\
+          \           \"predictor\": {\n                \"model\": {\n           \
+          \         \"storageUri\": storage_uri,\n                    \"args\": \"\
+          --enable_docs_url=True\",\n                    \"modelFormat\": {\n    \
+          \                    \"name\": \"sklearn\"\n                        }\n\
+          \                }\n            }\n        }\n    }\n\n    print(f\"Deploying\
+          \ model {model_name} from {storage_uri} to KServe...\")\n\n    try:\n  \
+          \      api.create_namespaced_custom_object(\n            group=\"serving.kserve.io\"\
           ,\n            version=\"v1beta1\",\n            namespace=namespace,\n\
-          \            plural=\"inferenceservices\",\n            name=model_name,\n\
-          \            body=inference_service,\n        )\n        print(\"KServe\
-          \ InferenceService patched successfully.\")\n\n"
+          \            plural=\"inferenceservices\",\n            body=inference_service,\n\
+          \        )\n        print(\"KServe InferenceService created successfully.\"\
+          )\n    except Exception as e:\n        print(f\"Service might exist, trying\
+          \ to patch: {e}\")\n        api.patch_namespaced_custom_object(\n      \
+          \      group=\"serving.kserve.io\",\n            version=\"v1beta1\",\n\
+          \            namespace=namespace,\n            plural=\"inferenceservices\"\
+          ,\n            name=model_name,\n            body=inference_service,\n \
+          \       )\n        print(\"KServe InferenceService patched successfully.\"\
+          )\n\n"
         image: python:3.10
     exec-prepare:
       container:

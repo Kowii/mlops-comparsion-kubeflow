@@ -34,8 +34,12 @@ def deploy(
         },
         "spec": {
             "predictor": {
-                "sklearn": {
-                    "storageUri": storage_uri
+                "model": {
+                    "storageUri": storage_uri,
+                    "args": "--enable_docs_url=True",
+                    "modelFormat": {
+                        "name": "sklearn"
+                        }
                 }
             }
         }
