@@ -50,6 +50,10 @@ components:
             schemaTitle: system.Dataset
             schemaVersion: 0.0.1
           description: Prepared dataset from previous pipeline step
+        input_transformer:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
       parameters:
         config_path:
           description: Path to config file in Minio
@@ -271,7 +275,8 @@ deploymentSpec:
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef train(\n        config_path: str,\n        input_dataset: dsl.Input[dsl.Dataset],\n\
-          \        output_model: dsl.Output[dsl.Model],\n        kfp_metrics: dsl.Output[dsl.Metrics],\n\
+          \        input_transformer: dsl.Input[dsl.Artifact],\n        output_model:\
+          \ dsl.Output[dsl.Model],\n        kfp_metrics: dsl.Output[dsl.Metrics],\n\
           \        override_n_estimators: int = 0,\n        override_max_depth: int\
           \ = 0,\n        override_algorithm: str = \"\"\n):\n    \"\"\"\n    Conducts\
           \ model training and exports trained model\n    :param config_path: Path\
@@ -322,9 +327,10 @@ deploymentSpec:
           \ as e:\n            print(\"Training failed - probably values weren't transformed\
           \ - please check prepare step\")\n            raise e\n        print(\"\
           Model trained\")\n        return model\n\n    # ewaluacja\n    def evaluate_model(config:\
-          \ dict, X_test, y_test, model):\n        y_pred = model.predict(X_test)\n\
-          \n        print(\"Classification report:\")\n        print(classification_report(y_test,\
-          \ y_pred))\n        print(\"Confusion matrix:\")\n        print(confusion_matrix(y_test,\
+          \ dict, X_test, y_test, model):\n        from sklearn.pipeline import Pipeline\n\
+          \        y_pred = model.predict(X_test)\n\n        print(\"Classification\
+          \ report:\")\n        print(classification_report(y_test, y_pred))\n   \
+          \     print(\"Confusion matrix:\")\n        print(confusion_matrix(y_test,\
           \ y_pred))\n\n        recall = recall_score(y_test, y_pred)\n        accuracy\
           \ = accuracy_score(y_test, y_pred)\n\n        print(f\"Recall: {recall}\"\
           )\n        print(f\"Accuracy: {accuracy}\")\n\n        # logowanie metryk\
@@ -333,11 +339,15 @@ deploymentSpec:
           \   min_recall = config[\"train\"][\"min_recall\"]\n        min_accuracy\
           \ = config[\"train\"][\"min_accuracy\"]\n\n        if recall > min_recall\
           \ and accuracy > min_accuracy:\n            print(f\"Accuracy over {min_accuracy}\
-          \ and Recall over {min_recall} - promoting model\")\n            joblib.dump(model,\
-          \ output_model.path)\n            print(f\"Model saved to Kubeflow Artifact\
-          \ Store: {output_model.path}\")\n        else:\n            error_msg =\
-          \ f\"Quality gate failed! Recall: {recall} < {min_recall} or Accuracy: {accuracy}\
-          \ < {min_accuracy}\"\n            print(error_msg)\n            raise RuntimeError(error_msg)\n\
+          \ and Recall over {min_recall} - promoting model\")\n            os.makedirs(output_model.path,\
+          \ exist_ok=True)\n            file_path = os.path.join(output_model.path,\
+          \ \"model.joblib\")\n            transformer = joblib.load(input_transformer.path)\n\
+          \            full_pipeline = Pipeline([(\"preprocessor\", transformer),(\"\
+          predictor\", model)])\n            joblib.dump(full_pipeline, file_path)\n\
+          \            print(f\"Model saved to Kubeflow Artifact Store: {file_path}\"\
+          )\n        else:\n            error_msg = f\"Quality gate failed! Recall:\
+          \ {recall} < {min_recall} or Accuracy: {accuracy} < {min_accuracy}\"\n \
+          \           print(error_msg)\n            raise RuntimeError(error_msg)\n\
           \n\n    print(\"Training process started\")\n    print(\"Loading config\"\
           )\n    config = _load_config(config_path)\n\n    print(f\"Loading prepared\
           \ data from Kubeflow Dataset: {input_dataset.path}\")\n    data = pd.read_parquet(input_dataset.path)\n\
@@ -367,8 +377,7 @@ root:
         taskInfo:
           name: deploy
       prepare:
-        cachingOptions:
-          enableCache: true
+        cachingOptions: {}
         componentRef:
           name: comp-prepare
         inputs:
@@ -378,8 +387,7 @@ root:
         taskInfo:
           name: prepare
       train:
-        cachingOptions:
-          enableCache: true
+        cachingOptions: {}
         componentRef:
           name: comp-train
         dependentTasks:
@@ -389,6 +397,10 @@ root:
             input_dataset:
               taskOutputArtifact:
                 outputArtifactKey: output_dataset
+                producerTask: prepare
+            input_transformer:
+              taskOutputArtifact:
+                outputArtifactKey: output_transformer
                 producerTask: prepare
           parameters:
             config_path:

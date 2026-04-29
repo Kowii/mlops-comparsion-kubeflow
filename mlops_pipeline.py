@@ -29,6 +29,7 @@ def mlops_pipeline(
     model_train_task = train_component.train(
         config_path=config_path,
         input_dataset=data_prep_task.outputs['output_dataset'],
+        input_transformer=data_prep_task.outputs['output_transformer'],
         override_n_estimators=pipeline_n_estimators,
         override_max_depth=pipeline_max_depth,
         override_algorithm=pipeline_algorithm

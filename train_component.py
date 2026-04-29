@@ -9,6 +9,7 @@ from kfp.dsl import component
 def train(
         config_path: str,
         input_dataset: dsl.Input[dsl.Dataset],
+        input_transformer: dsl.Input[dsl.Artifact],
         output_model: dsl.Output[dsl.Model],
         kfp_metrics: dsl.Output[dsl.Metrics],
         override_n_estimators: int = 0,
@@ -101,6 +102,7 @@ def train(
 
     # ewaluacja
     def evaluate_model(config: dict, X_test, y_test, model):
+        from sklearn.pipeline import Pipeline
         y_pred = model.predict(X_test)
 
         print("Classification report:")
@@ -125,7 +127,9 @@ def train(
             print(f"Accuracy over {min_accuracy} and Recall over {min_recall} - promoting model")
             os.makedirs(output_model.path, exist_ok=True)
             file_path = os.path.join(output_model.path, "model.joblib")
-            joblib.dump(model, file_path)
+            transformer = joblib.load(input_transformer.path)
+            full_pipeline = Pipeline([("preprocessor", transformer),("predictor", model)])
+            joblib.dump(full_pipeline, file_path)
             print(f"Model saved to Kubeflow Artifact Store: {file_path}")
         else:
             error_msg = f"Quality gate failed! Recall: {recall} < {min_recall} or Accuracy: {accuracy} < {min_accuracy}"
