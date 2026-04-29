@@ -39,6 +39,16 @@ def deploy(
                     "args": ["--enable_docs_url=True"],
                     "modelFormat": {
                         "name": "sklearn"
+                        },
+                    "resources": {
+                        "requests": {
+                            "cpu": "250m",
+                            "memory": "256Mi"
+                            },
+                        "limits": {
+                            "cpu": "500m",
+                            "memory": "512Mi"
+                            }
                         }
                 }
             }
