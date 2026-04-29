@@ -129,7 +129,7 @@ deploymentSpec:
           \            plural=\"inferenceservices\",\n            name=model_name,\n\
           \            body=inference_service,\n        )\n        print(\"KServe\
           \ InferenceService patched successfully.\")\n\n"
-        image: python:3.13
+        image: python:3.10
     exec-prepare:
       container:
         args:

@@ -4,7 +4,7 @@ from kfp.dsl import component
 
 
 @component(
-    base_image="python:3.13",
+    base_image="python:3.10",
     packages_to_install=["kubernetes"]
 )
 def deploy(
