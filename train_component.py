@@ -123,8 +123,10 @@ def train(
 
         if recall > min_recall and accuracy > min_accuracy:
             print(f"Accuracy over {min_accuracy} and Recall over {min_recall} - promoting model")
-            joblib.dump(model, output_model.path)
-            print(f"Model saved to Kubeflow Artifact Store: {output_model.path}")
+            os.makedirs(output_model.path, exist_ok=True)
+            file_path = os.path.join(output_model.path, "model.joblib")
+            joblib.dump(model, file_path)
+            print(f"Model saved to Kubeflow Artifact Store: {file_path}")
         else:
             error_msg = f"Quality gate failed! Recall: {recall} < {min_recall} or Accuracy: {accuracy} < {min_accuracy}"
             print(error_msg)

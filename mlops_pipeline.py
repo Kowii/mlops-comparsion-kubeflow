@@ -23,6 +23,7 @@ def mlops_pipeline(
             'S3_SECRET_KEY': 'S3_SECRET_KEY',
             'S3_ENDPOINT_URL': 'S3_ENDPOINT_URL'
         })
+    data_prep_task.set_caching_options(False)
 
     # etap trenowania modelu
     model_train_task = train_component.train(
@@ -32,6 +33,7 @@ def mlops_pipeline(
         override_max_depth=pipeline_max_depth,
         override_algorithm=pipeline_algorithm
     )
+    model_train_task.set_caching_options(False)
     kubernetes.use_secret_as_env(
         task=model_train_task,
         secret_name='s3-credentials',
