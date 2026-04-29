@@ -21,7 +21,7 @@ def deploy(
     api = client.CustomObjectsApi()
 
     storage_uri = model.uri
-
+    storage_uri = storage_uri.replace("minio","s3")
     inference_service = {
         "apiVersion": "serving.kserve.io/v1beta1",
         "kind": "InferenceService",

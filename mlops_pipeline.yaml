@@ -109,29 +109,29 @@ deploymentSpec:
           \ str = \"diabetes-predictor\",\n        namespace: str = \"kubeflow\"\n\
           ):\n    \"\"\"\n    Wdra\u017Ca model przy u\u017Cyciu KServe InferenceService.\n\
           \    \"\"\"\n    from kubernetes import client, config\n\n    config.load_incluster_config()\n\
-          \    api = client.CustomObjectsApi()\n\n    storage_uri = model.uri\n\n\
-          \    inference_service = {\n        \"apiVersion\": \"serving.kserve.io/v1beta1\"\
-          ,\n        \"kind\": \"InferenceService\",\n        \"metadata\": {\n  \
-          \          \"name\": model_name,\n            \"namespace\": namespace,\n\
-          \            \"annotations\": {\n                \"serving.kserve.io/secretKey\"\
-          : \"s3-credentials\"\n            }\n        },\n        \"spec\": {\n \
-          \           \"predictor\": {\n                \"model\": {\n           \
-          \         \"storageUri\": storage_uri,\n                    \"args\": [\"\
-          --enable_docs_url=True\"],\n                    \"modelFormat\": {\n   \
-          \                     \"name\": \"sklearn\"\n                        }\n\
-          \                }\n            }\n        }\n    }\n\n    print(f\"Deploying\
-          \ model {model_name} from {storage_uri} to KServe...\")\n\n    try:\n  \
-          \      api.create_namespaced_custom_object(\n            group=\"serving.kserve.io\"\
+          \    api = client.CustomObjectsApi()\n\n    storage_uri = model.uri\n  \
+          \  storage_uri = storage_uri.replace(\"minio\",\"s3\")\n    inference_service\
+          \ = {\n        \"apiVersion\": \"serving.kserve.io/v1beta1\",\n        \"\
+          kind\": \"InferenceService\",\n        \"metadata\": {\n            \"name\"\
+          : model_name,\n            \"namespace\": namespace,\n            \"annotations\"\
+          : {\n                \"serving.kserve.io/secretKey\": \"s3-credentials\"\
+          \n            }\n        },\n        \"spec\": {\n            \"predictor\"\
+          : {\n                \"model\": {\n                    \"storageUri\": storage_uri,\n\
+          \                    \"args\": [\"--enable_docs_url=True\"],\n         \
+          \           \"modelFormat\": {\n                        \"name\": \"sklearn\"\
+          \n                        }\n                }\n            }\n        }\n\
+          \    }\n\n    print(f\"Deploying model {model_name} from {storage_uri} to\
+          \ KServe...\")\n\n    try:\n        api.create_namespaced_custom_object(\n\
+          \            group=\"serving.kserve.io\",\n            version=\"v1beta1\"\
+          ,\n            namespace=namespace,\n            plural=\"inferenceservices\"\
+          ,\n            body=inference_service,\n        )\n        print(\"KServe\
+          \ InferenceService created successfully.\")\n    except Exception as e:\n\
+          \        print(f\"Service might exist, trying to patch: {e}\")\n       \
+          \ api.patch_namespaced_custom_object(\n            group=\"serving.kserve.io\"\
           ,\n            version=\"v1beta1\",\n            namespace=namespace,\n\
-          \            plural=\"inferenceservices\",\n            body=inference_service,\n\
-          \        )\n        print(\"KServe InferenceService created successfully.\"\
-          )\n    except Exception as e:\n        print(f\"Service might exist, trying\
-          \ to patch: {e}\")\n        api.patch_namespaced_custom_object(\n      \
-          \      group=\"serving.kserve.io\",\n            version=\"v1beta1\",\n\
-          \            namespace=namespace,\n            plural=\"inferenceservices\"\
-          ,\n            name=model_name,\n            body=inference_service,\n \
-          \       )\n        print(\"KServe InferenceService patched successfully.\"\
-          )\n\n"
+          \            plural=\"inferenceservices\",\n            name=model_name,\n\
+          \            body=inference_service,\n        )\n        print(\"KServe\
+          \ InferenceService patched successfully.\")\n\n"
         image: python:3.10
     exec-prepare:
       container:
