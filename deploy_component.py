@@ -8,7 +8,7 @@ from kfp.dsl import component
     packages_to_install=["kubernetes"]
 )
 def deploy(
-        model_uri: str,
+        model: dsl.Input[dsl.Model],
         model_name: str = "diabetes-predictor",
         namespace: str = "kubeflow"
 ):
@@ -20,7 +20,7 @@ def deploy(
     config.load_incluster_config()
     api = client.CustomObjectsApi()
 
-    storage_uri = model_uri.rsplit('/', 1)[0]
+    storage_uri = model.uri
 
     inference_service = {
         "apiVersion": "serving.kserve.io/v1beta1",

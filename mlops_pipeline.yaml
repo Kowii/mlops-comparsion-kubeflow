@@ -3,7 +3,27 @@
 # Description: E2E pipeline for training classification model
 # Inputs:
 #    config_path: str [Default: 's3://mlops-config/config.yaml']
+#    pipeline_algorithm: str [Default: '']
+#    pipeline_max_depth: int [Default: 0.0]
+#    pipeline_n_estimators: int [Default: 0.0]
 components:
+  comp-deploy:
+    executorLabel: exec-deploy
+    inputDefinitions:
+      artifacts:
+        model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+      parameters:
+        model_name:
+          defaultValue: diabetes-predictor
+          isOptional: true
+          parameterType: STRING
+        namespace:
+          defaultValue: kubeflow
+          isOptional: true
+          parameterType: STRING
   comp-prepare:
     executorLabel: exec-prepare
     inputDefinitions:
@@ -34,6 +54,18 @@ components:
         config_path:
           description: Path to config file in Minio
           parameterType: STRING
+        override_algorithm:
+          defaultValue: ''
+          isOptional: true
+          parameterType: STRING
+        override_max_depth:
+          defaultValue: 0.0
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        override_n_estimators:
+          defaultValue: 0.0
+          isOptional: true
+          parameterType: NUMBER_INTEGER
     outputDefinitions:
       artifacts:
         kfp_metrics:
@@ -46,6 +78,58 @@ components:
             schemaVersion: 0.0.1
 deploymentSpec:
   executors:
+    exec-deploy:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - deploy
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kubernetes'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef deploy(\n        model: dsl.Input[dsl.Model],\n        model_name:\
+          \ str = \"diabetes-predictor\",\n        namespace: str = \"kubeflow\"\n\
+          ):\n    \"\"\"\n    Wdra\u017Ca model przy u\u017Cyciu KServe InferenceService.\n\
+          \    \"\"\"\n    from kubernetes import client, config\n\n    config.load_incluster_config()\n\
+          \    api = client.CustomObjectsApi()\n\n    storage_uri = model.uri\n\n\
+          \    inference_service = {\n        \"apiVersion\": \"serving.kserve.io/v1beta1\"\
+          ,\n        \"kind\": \"InferenceService\",\n        \"metadata\": {\n  \
+          \          \"name\": model_name,\n            \"namespace\": namespace,\n\
+          \            \"annotations\": {\n                \"serving.kserve.io/secretKey\"\
+          : \"s3-credentials\"\n            }\n        },\n        \"spec\": {\n \
+          \           \"predictor\": {\n                \"sklearn\": {\n         \
+          \           \"storageUri\": storage_uri\n                }\n           \
+          \ }\n        }\n    }\n\n    print(f\"Deploying model {model_name} from\
+          \ {storage_uri} to KServe...\")\n\n    try:\n        api.create_namespaced_custom_object(\n\
+          \            group=\"serving.kserve.io\",\n            version=\"v1beta1\"\
+          ,\n            namespace=namespace,\n            plural=\"inferenceservices\"\
+          ,\n            body=inference_service,\n        )\n        print(\"KServe\
+          \ InferenceService created successfully.\")\n    except Exception as e:\n\
+          \        print(f\"Service might exist, trying to patch: {e}\")\n       \
+          \ api.patch_namespaced_custom_object(\n            group=\"serving.kserve.io\"\
+          ,\n            version=\"v1beta1\",\n            namespace=namespace,\n\
+          \            plural=\"inferenceservices\",\n            name=model_name,\n\
+          \            body=inference_service,\n        )\n        print(\"KServe\
+          \ InferenceService patched successfully.\")\n\n"
+        image: python:3.13
     exec-prepare:
       container:
         args:
@@ -178,27 +262,36 @@ deploymentSpec:
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef train(\n        config_path: str,\n        input_dataset: dsl.Input[dsl.Dataset],\n\
-          \        output_model: dsl.Output[dsl.Model],\n        kfp_metrics: dsl.Output[dsl.Metrics]\n\
-          ):\n    \"\"\"\n    Conducts model training and exports trained model\n\
-          \    :param config_path: Path to config file in Minio\n    :param input_dataset:\
-          \ Prepared dataset from previous pipeline step\n    :param output_model:\
-          \ Path to export model in joblib format\n    :param kfp_metrics: Output\
-          \ metrics for Kubeflow UI\n    \"\"\"\n    import pandas as pd\n    import\
-          \ yaml\n    from sklearn.model_selection import train_test_split\n    from\
-          \ sklearn.metrics import classification_report, confusion_matrix, recall_score,\
-          \ accuracy_score\n    import joblib\n    import os\n    import s3fs\n\n\
-          \    storage_options = {\n        \"key\": os.environ[\"S3_ACCESS_KEY\"\
-          ],\n        \"secret\": os.environ[\"S3_SECRET_KEY\"],\n        \"client_kwargs\"\
-          : {\"endpoint_url\": os.environ[\"S3_ENDPOINT_URL\"]},\n    }\n\n    # za\u0142\
-          adowanie konfiguracji\n    def _load_config(path: str) -> dict:\n      \
-          \  fs = s3fs.S3FileSystem(**storage_options)\n        with fs.open(path,\
-          \ 'r') as f:\n            return yaml.safe_load(f)\n\n    # podzia\u0142\
-          \ danych\n    def split_data(config: dict, data: pd.DataFrame):\n      \
-          \  print(\"Splitting data\")\n        X = data.drop([config[\"data\"][\"\
-          target_column\"]], axis=1)\n        y = data[config[\"data\"][\"target_column\"\
-          ]]\n\n        X_train, X_test, y_train, y_test = train_test_split(\n   \
-          \         X, y,\n            test_size=config[\"train\"][\"test_size\"],\n\
-          \            random_state=config[\"train\"][\"random_state\"]\n        )\n\
+          \        output_model: dsl.Output[dsl.Model],\n        kfp_metrics: dsl.Output[dsl.Metrics],\n\
+          \        override_n_estimators: int = 0,\n        override_max_depth: int\
+          \ = 0,\n        override_algorithm: str = \"\"\n):\n    \"\"\"\n    Conducts\
+          \ model training and exports trained model\n    :param config_path: Path\
+          \ to config file in Minio\n    :param input_dataset: Prepared dataset from\
+          \ previous pipeline step\n    :param output_model: Path to export model\
+          \ in joblib format\n    :param kfp_metrics: Output metrics for Kubeflow\
+          \ UI\n    \"\"\"\n    import pandas as pd\n    import yaml\n    from sklearn.model_selection\
+          \ import train_test_split\n    from sklearn.metrics import classification_report,\
+          \ confusion_matrix, recall_score, accuracy_score\n    import joblib\n  \
+          \  import os\n    import s3fs\n\n    storage_options = {\n        \"key\"\
+          : os.environ[\"S3_ACCESS_KEY\"],\n        \"secret\": os.environ[\"S3_SECRET_KEY\"\
+          ],\n        \"client_kwargs\": {\"endpoint_url\": os.environ[\"S3_ENDPOINT_URL\"\
+          ]},\n    }\n\n    # za\u0142adowanie konfiguracji\n    def _load_config(path:\
+          \ str) -> dict:\n        fs = s3fs.S3FileSystem(**storage_options)\n   \
+          \     with fs.open(path, 'r') as f:\n            config = yaml.safe_load(f)\n\
+          \        if override_n_estimators > 0:\n            config[\"train\"][\"\
+          n_estimators\"] = override_n_estimators\n            print(f\"Overridden\
+          \ n_estimators: {override_n_estimators}\")\n        if override_max_depth\
+          \ > 0:\n            config[\"train\"][\"max_depth\"] = override_max_depth\n\
+          \            print(f\"Overridden max_depth: {override_max_depth}\")\n  \
+          \      if override_algorithm != \"\":\n            config[\"train\"][\"\
+          algorithm\"] = override_algorithm\n            print(f\"Overridden algorithm:\
+          \ {override_algorithm}\")\n        return config\n\n    # podzia\u0142 danych\n\
+          \    def split_data(config: dict, data: pd.DataFrame):\n        print(\"\
+          Splitting data\")\n        X = data.drop([config[\"data\"][\"target_column\"\
+          ]], axis=1)\n        y = data[config[\"data\"][\"target_column\"]]\n\n \
+          \       X_train, X_test, y_train, y_test = train_test_split(\n         \
+          \   X, y,\n            test_size=config[\"train\"][\"test_size\"],\n   \
+          \         random_state=config[\"train\"][\"random_state\"]\n        )\n\
           \        return X_train, X_test, y_train, y_test\n\n    # trening\n    def\
           \ train_model(config: dict, X_train, y_train):\n        print(\"Starting\
           \ training\")\n        algorithm = config[\"train\"][\"algorithm\"]\n  \
@@ -250,6 +343,21 @@ pipelineInfo:
 root:
   dag:
     tasks:
+      deploy:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-deploy
+        dependentTasks:
+        - train
+        inputs:
+          artifacts:
+            model:
+              taskOutputArtifact:
+                outputArtifactKey: output_model
+                producerTask: train
+        taskInfo:
+          name: deploy
       prepare:
         cachingOptions:
           enableCache: true
@@ -277,6 +385,12 @@ root:
           parameters:
             config_path:
               componentInputParameter: config_path
+            override_algorithm:
+              componentInputParameter: pipeline_algorithm
+            override_max_depth:
+              componentInputParameter: pipeline_max_depth
+            override_n_estimators:
+              componentInputParameter: pipeline_n_estimators
         taskInfo:
           name: train
   inputDefinitions:
@@ -285,6 +399,18 @@ root:
         defaultValue: s3://mlops-config/config.yaml
         isOptional: true
         parameterType: STRING
+      pipeline_algorithm:
+        defaultValue: ''
+        isOptional: true
+        parameterType: STRING
+      pipeline_max_depth:
+        defaultValue: 0.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      pipeline_n_estimators:
+        defaultValue: 0.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
 schemaVersion: 2.1.0
 sdkVersion: kfp-2.16.0
 ---
@@ -302,10 +428,10 @@ platforms:
             - envVar: S3_ENDPOINT_URL
               secretKey: S3_ENDPOINT_URL
             optional: false
-            secretName: s3_credentials
+            secretName: s3-credentials
             secretNameParameter:
               runtimeValue:
-                constant: s3_credentials
+                constant: s3-credentials
         exec-train:
           secretAsEnv:
           - keyToEnv:

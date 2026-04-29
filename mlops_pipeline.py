@@ -18,7 +18,7 @@ def mlops_pipeline(
     data_prep_task = data_component.prepare(
         config_path=config_path,
     )
-    kubernetes.use_secret_as_env(data_prep_task, secret_name='s3_credentials', secret_key_to_env={
+    kubernetes.use_secret_as_env(data_prep_task, secret_name='s3-credentials', secret_key_to_env={
             'S3_ACCESS_KEY': 'S3_ACCESS_KEY',
             'S3_SECRET_KEY': 'S3_SECRET_KEY',
             'S3_ENDPOINT_URL': 'S3_ENDPOINT_URL'
@@ -32,7 +32,6 @@ def mlops_pipeline(
         override_max_depth=pipeline_max_depth,
         override_algorithm=pipeline_algorithm
     )
-    model_train_task.after(data_prep_task)
     kubernetes.use_secret_as_env(
         task=model_train_task,
         secret_name='s3-credentials',
@@ -41,9 +40,8 @@ def mlops_pipeline(
     )
 
     deploy_task = deploy_component.deploy(
-        model_uri=model_train_task.outputs['output_model'].path
+        model=model_train_task.outputs['output_model']
     )
-    deploy_task.after(model_train_task)
 
 if __name__ == '__main__':
     from kfp.compiler import Compiler
