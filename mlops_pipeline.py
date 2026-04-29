@@ -42,6 +42,7 @@ def mlops_pipeline(
     deploy_task = deploy_component.deploy(
         model=model_train_task.outputs['output_model']
     )
+    deploy_task.set_caching_options(False)
 
 if __name__ == '__main__':
     from kfp.compiler import Compiler

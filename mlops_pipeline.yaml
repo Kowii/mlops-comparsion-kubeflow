@@ -353,8 +353,7 @@ root:
   dag:
     tasks:
       deploy:
-        cachingOptions:
-          enableCache: true
+        cachingOptions: {}
         componentRef:
           name: comp-deploy
         dependentTasks:
