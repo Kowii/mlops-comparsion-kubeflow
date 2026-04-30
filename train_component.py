@@ -113,8 +113,8 @@ def train(
         recall = recall_score(y_test, y_pred)
         accuracy = accuracy_score(y_test, y_pred)
 
-        print(f"Recall: {recall}")
-        print(f"Accuracy: {accuracy}")
+        print(f"recall={float(recall)}")
+        print(f"accuracy={float(accuracy)}")
 
         # logowanie metryk do kubeflow ui
         kfp_metrics.log_metric("recall", float(recall))

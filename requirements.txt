@@ -11,3 +11,4 @@ kfp
 kfp[kubernetes]
 s3fs
 python-dotenv
+python-kubernetes
