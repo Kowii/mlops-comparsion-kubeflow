@@ -1,0 +1,530 @@
+# PIPELINE DEFINITION
+# Name: hpo-pipeline
+# Description: Pipeline for training classification model with optimized hiperparameters using katib
+# Inputs:
+#    config_path: str [Default: 's3://mlops-config/config.yaml']
+#    pipeline_algorithm: str [Default: '']
+components:
+  comp-prepare:
+    executorLabel: exec-prepare
+    inputDefinitions:
+      parameters:
+        config_path:
+          description: Path to config file in Minio
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        output_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        output_transformer:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+  comp-run-katib-tuning:
+    executorLabel: exec-run-katib-tuning
+    inputDefinitions:
+      artifacts:
+        dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        experiment_name:
+          defaultValue: diabetes-hpo
+          isOptional: true
+          parameterType: STRING
+        namespace:
+          defaultValue: kubeflow
+          isOptional: true
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        best_max_depth:
+          parameterType: NUMBER_INTEGER
+        best_n_estimators:
+          parameterType: NUMBER_INTEGER
+  comp-train:
+    executorLabel: exec-train
+    inputDefinitions:
+      artifacts:
+        input_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+          description: Prepared dataset from previous pipeline step
+        input_transformer:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+      parameters:
+        config_path:
+          description: Path to config file in Minio
+          parameterType: STRING
+        override_algorithm:
+          defaultValue: ''
+          isOptional: true
+          parameterType: STRING
+        override_max_depth:
+          defaultValue: 0.0
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        override_n_estimators:
+          defaultValue: 0.0
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+    outputDefinitions:
+      artifacts:
+        kfp_metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+        output_model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+deploymentSpec:
+  executors:
+    exec-prepare:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - prepare
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas' 'pyarrow'\
+          \ 'scikit-learn' 'joblib' 's3fs' 'pyYAML'  &&  python3 -m pip install --quiet\
+          \ --no-warn-script-location 'kfp==2.16.0' '--no-deps' 'typing-extensions>=3.7.4,<5;\
+          \ python_version<\"3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef prepare(\n    config_path: str,\n    output_dataset: dsl.Output[dsl.Dataset],\n\
+          \    output_transformer: dsl.Output[dsl.Artifact]\n):\n    \"\"\"\n    Conducts\
+          \ data preparation for ML Pipeline\n    :param output_transformer: Path\
+          \ to export transformer in joblib format\n    :param output_dataset: Path\
+          \ to export dataset in parquet format\n    :param config_path: Path to config\
+          \ file in Minio\n\n    :return:\n    \"\"\"\n    # importy zale\u017Cno\u015B\
+          ci\n    import pandas as pd\n    import yaml\n    from sklearn.impute import\
+          \ SimpleImputer\n    from sklearn.compose import ColumnTransformer\n   \
+          \ from sklearn.pipeline import Pipeline\n    from sklearn.preprocessing\
+          \ import StandardScaler, OneHotEncoder\n    import joblib\n    import os\n\
+          \    import s3fs\n\n    storage_options = {\n        \"key\": os.environ[\"\
+          S3_ACCESS_KEY\"],\n        \"secret\": os.environ[\"S3_SECRET_KEY\"],\n\
+          \        \"client_kwargs\": {\"endpoint_url\": os.environ[\"S3_ENDPOINT_URL\"\
+          ]},\n    }\n\n    # za\u0142adowanie konfiguracji\n    def _load_config(path:\
+          \ str) -> dict:\n        fs = s3fs.S3FileSystem(**storage_options)\n   \
+          \     with fs.open(path, 'r') as f:\n            return yaml.safe_load(f)\n\
+          \n    # import danych\n    def ingest_data(config: dict) -> pd.DataFrame:\n\
+          \        raw_path = config[\"data\"][\"raw_path\"]\n        return pd.read_csv(raw_path,\
+          \ storage_options=storage_options)\n\n    # walidacja danych\n    # sprawdza,\
+          \ czy zgadzaj\u0105 si\u0119 nazwy kolumn i rodzaj danych\n    def validate_data(config:\
+          \ dict, data: pd.DataFrame) -> pd.DataFrame:\n        required_columns =\
+          \ config[\"data\"][\"required_columns\"]\n        required_columns_names\
+          \ = required_columns.keys()\n        missing_columns = data.columns.difference(required_columns_names)\n\
+          \        if missing_columns.size > 0:\n            raise ValueError(f\"\
+          Missing required columns: {missing_columns}\")\n        try:\n         \
+          \   data = data.astype(required_columns)\n        except ValueError as e:\n\
+          \            raise ValueError(f\"Incorrect column data types: {e}\")\n \
+          \       return data\n\n    # czyszczenie danych\n    def clean_data(config:\
+          \ dict, data: pd.DataFrame) -> pd.DataFrame:\n        # usuwanie duplikat\xF3\
+          w\n        print(\"Starting data cleaning\")\n        print(\"Dropping duplicated\
+          \ rows\")\n        data.drop_duplicates(inplace=True)\n\n        if config[\"\
+          data\"][\"remove_empty\"]:\n            # decyzja z konfiguracji o usuni\u0119\
+          ciu wierszy z brakuj\u0105cymi danymi\n            print(\"Rows with empty\
+          \ values will be removed\")\n            data.dropna(inplace=True)\n   \
+          \     else:\n            # decyzja z konfiguracji o zast\u0105pieniu brak\xF3\
+          w danymi z transformera\n            print(\"Rows with empty values handled\
+          \ in data transformation\")\n\n        print(\"Data cleaning ended\")\n\
+          \        return data\n\n    # transformacja danych\n    # kodowanie, skalowanie,\
+          \ imputacja\n    def transform_data(config: dict, data: pd.DataFrame):\n\
+          \        print(\"Starting data transformation\")\n\n\n        num_imputer_strategy\
+          \ = config[\"data\"][\"imputer_num\"]\n        cat_imputer_strategy = config[\"\
+          data\"][\"imputer_cat\"]\n\n        # kolumny wymagaj\u0105ce skalowania\n\
+          \        scaled_columns = config[\"data\"][\"scaled_columns\"]\n\n     \
+          \   # kolumny wymagaj\u0105ce kodowania\n        encoded_columns = config[\"\
+          data\"][\"onehot_columns\"]\n\n        # kolumny wymagaj\u0105ce jedynie\
+          \ imputacji\n        binary_columns = config[\"data\"][\"binary_columns\"\
+          ]\n\n        # pipeline dla danych liczbowych\n        num_pipeline = Pipeline([\n\
+          \            (\"imputer\", SimpleImputer(strategy=num_imputer_strategy)),\n\
+          \            (\"scaler\", StandardScaler()),\n        ])\n\n        # pipeline\
+          \ dla danych kategorycznych\n        cat_pipeline = Pipeline([\n       \
+          \     (\"imputer\", SimpleImputer(strategy=cat_imputer_strategy)),\n   \
+          \         (\"onehot\", OneHotEncoder(sparse_output=False))\n        ])\n\
+          \n        # transformer dla cech\n        transformer = ColumnTransformer(\n\
+          \            transformers=[\n                (\"num_pipeline\", num_pipeline,\
+          \ scaled_columns),\n                (\"cat_pipeline\", cat_pipeline, encoded_columns),\n\
+          \                (\"bin_pipeline\", SimpleImputer(strategy=\"most_frequent\"\
+          ), binary_columns)\n            ],\n            remainder=\"drop\"\n   \
+          \     ).set_output(transform=\"pandas\")\n\n        # oddzielenie cech od\
+          \ celu\n        X = data.drop(columns=config[\"data\"][\"target_column\"\
+          ])\n        y = data[config[\"data\"][\"target_column\"]]\n\n        X =\
+          \ transformer.fit_transform(X)\n\n        data = pd.concat([X, y.reset_index(drop=True)],\
+          \ axis=1)\n        data.dropna(inplace=True)\n\n        print(\"Data transformation\
+          \ ended\")\n        return data, transformer\n\n    # eksport danych\n \
+          \   # eksport pandas dataframe do parquet\n    def export_data(data: pd.DataFrame):\n\
+          \        print(\"Exporting data started\")\n        output_path = output_dataset.path\n\
+          \        data.to_parquet(output_path)\n        print(f\"Data saved to: {output_path}\"\
+          )\n\n    # eksport transformatora\n    # eksport do formatu joblib\n   \
+          \ def export_transformer(transformer):\n        print(\"Exporting transformer\
+          \ started\")\n        output_path = output_transformer.path\n        joblib.dump(transformer,\
+          \ output_path)\n        print(f\"Data saved to: {output_path}\")\n\n\n \
+          \   print(\"Starting data preparation\")\n    print(\"Loading config\")\n\
+          \    config = _load_config(config_path)\n    data = ingest_data(config)\n\
+          \    data = validate_data(config, data)\n    data = clean_data(config, data)\n\
+          \    data, transformer = transform_data(config, data)\n    export_data(data)\n\
+          \    export_transformer(transformer)\n    print(\"Data preparation finished\"\
+          )\n\n"
+        image: python:3.13
+    exec-run-katib-tuning:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - run_katib_tuning
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kubernetes'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef run_katib_tuning(\n        dataset: dsl.Input[dsl.Dataset],\n\
+          \        experiment_name: str = \"diabetes-hpo\",\n        namespace: str\
+          \ = \"kubeflow\"\n) -> NamedTuple('Outputs', [('best_n_estimators', int),\
+          \ ('best_max_depth', int)]):\n    from kubernetes import client, config\n\
+          \    import time\n    dataset_uri = dataset.uri\n    config.load_incluster_config()\n\
+          \    api = client.CustomObjectsApi()\n\n    experiment_manifest = {\n  \
+          \      \"apiVersion\": \"kubeflow.org/v1beta1\",\n        \"kind\": \"Experiment\"\
+          ,\n        \"metadata\": {\n            \"name\": experiment_name,\n   \
+          \         \"namespace\": namespace\n        },\n        \"spec\": {\n  \
+          \          \"objective\": {\n                \"type\": \"maximize\",\n \
+          \               \"goal\": 0.99,\n                \"objectiveMetricName\"\
+          : \"recall\"\n            },\n            \"algorithm\": {\n           \
+          \     \"algorithmName\": \"random\"\n            },\n            \"parallelTrialCount\"\
+          : 1,\n            \"maxTrialCount\": 5,\n            \"parameters\": [\n\
+          \                {\"name\": \"n_estimators\", \"parameterType\": \"int\"\
+          , \"feasibleSpace\": {\"min\": \"50\", \"max\": \"300\"}},\n           \
+          \     {\"name\": \"max_depth\", \"parameterType\": \"int\", \"feasibleSpace\"\
+          : {\"min\": \"3\", \"max\": \"10\"}}\n            ],\n            \"trialTemplate\"\
+          : {\n                \"primaryContainerName\": \"training-container\",\n\
+          \                \"trialParameters\": [\n                    {\"name\":\
+          \ \"n_estimators\", \"description\": \"\", \"reference\": \"n_estimators\"\
+          },\n                    {\"name\": \"max_depth\", \"description\": \"\"\
+          , \"reference\": \"max_depth\"}\n                ],\n                \"\
+          trialSpec\": {\n                    \"apiVersion\": \"batch/v1\",\n    \
+          \                \"kind\": \"Job\",\n                    \"spec\": {\n \
+          \                       \"template\": {\n                            \"\
+          metadata\": {\n                                \"annotations\": {\"sidecar.istio.io/inject\"\
+          : \"false\"}\n                            },\n                         \
+          \   \"spec\": {\n                                \"containers\": [\n   \
+          \                                 {\n                                  \
+          \      \"name\": \"training-container\",\n                             \
+          \           \"image\": \"localhost:32000/diabetes-train:latest\",\n    \
+          \                                    \"imagePullPolicy\": \"IfNotPresent\"\
+          ,\n                                        \"command\": [\n            \
+          \                                \"python\", \"/app/train_script.py\",\n\
+          \                                            \"--config_path\", \"s3://mlops-config/config.yaml\"\
+          ,\n                                            \"--dataset_path\", dataset_uri,\n\
+          \                                            \"--n_estimators\", \"${trialParameters.n_estimators}\"\
+          ,\n                                            \"--max_depth\", \"${trialParameters.max_depth}\"\
+          \n                                        ],\n                         \
+          \               \"env\": [\n                                           \
+          \ {\"name\": \"S3_ACCESS_KEY\", \"valueFrom\": {\n                     \
+          \                           \"secretKeyRef\": {\"name\": \"s3-credentials\"\
+          , \"key\": \"S3_ACCESS_KEY\"}}},\n                                     \
+          \       {\"name\": \"S3_SECRET_KEY\", \"valueFrom\": {\n               \
+          \                                 \"secretKeyRef\": {\"name\": \"s3-credentials\"\
+          , \"key\": \"S3_SECRET_KEY\"}}},\n                                     \
+          \       {\"name\": \"S3_ENDPOINT_URL\", \"valueFrom\": {\n             \
+          \                                   \"secretKeyRef\": {\"name\": \"s3-credentials\"\
+          , \"key\": \"S3_ENDPOINT_URL\"}}}\n                                    \
+          \    ]\n                                    }\n                        \
+          \        ],\n                                \"restartPolicy\": \"Never\"\
+          \n                            }\n                        }\n           \
+          \         }\n                }\n            }\n        }\n    }\n\n    print(f\"\
+          Applying experiment to k8s cluster: {experiment_name}\")\n    try:\n   \
+          \     api.create_namespaced_custom_object(\n            group=\"kubeflow.org\"\
+          ,\n            version=\"v1beta1\",\n            namespace=namespace,\n\
+          \            plural=\"experiments\",\n            body=experiment_manifest,\n\
+          \        )\n    except client.exceptions.ApiException as e:\n        if\
+          \ e.status == 409:  #\n            print(\"Replacing existing experiment\
+          \ with new...\")\n            api.delete_namespaced_custom_object(\n   \
+          \             group=\"kubeflow.org\", version=\"v1beta1\", namespace=namespace,\n\
+          \                plural=\"experiments\", name=experiment_name\n        \
+          \    )\n            time.sleep(5)\n            api.create_namespaced_custom_object(\n\
+          \                group=\"kubeflow.org\", version=\"v1beta1\", namespace=namespace,\n\
+          \                plural=\"experiments\", body=experiment_manifest,\n   \
+          \         )\n        else:\n            raise e\n\n    print(\"Waiting for\
+          \ experiment to finish...\")\n    while True:\n        exp = api.get_namespaced_custom_object(\n\
+          \            group=\"kubeflow.org\",\n            version=\"v1beta1\",\n\
+          \            namespace=namespace,\n            plural=\"experiments\",\n\
+          \            name=experiment_name\n        )\n\n        status = exp.get(\"\
+          status\", {})\n        conditions = status.get(\"conditions\", [])\n\n \
+          \       is_finished = False\n        for cond in conditions:\n         \
+          \   if cond.get(\"type\") in [\"Succeeded\", \"Failed\"] and cond.get(\"\
+          status\") == \"True\":\n                print(f\"Experiment ended successfully:\
+          \ {cond.get('type')}\")\n                is_finished = True\n          \
+          \      break\n\n        if is_finished:\n            break\n\n        print(\"\
+          Waiting...\")\n        time.sleep(15)\n\n    exp = api.get_namespaced_custom_object(\n\
+          \        group=\"kubeflow.org\", version=\"v1beta1\", namespace=namespace,\n\
+          \        plural=\"experiments\", name=experiment_name\n    )\n\n    best_trial\
+          \ = exp[\"status\"][\"currentOptimalTrial\"]\n    best_params = {p[\"name\"\
+          ]: p[\"value\"] for p in best_trial[\"parameterAssignments\"]}\n\n    print(f\"\
+          Optimized parameters: {best_params}\")\n\n    return (int(best_params[\"\
+          n_estimators\"]), int(best_params[\"max_depth\"]))\n\n"
+        image: python:3.10
+    exec-train:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - train
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas' 'pyarrow'\
+          \ 'scikit-learn' 'xgboost' 'joblib' 's3fs' 'pyyaml'  &&  python3 -m pip\
+          \ install --quiet --no-warn-script-location 'kfp==2.16.0' '--no-deps' 'typing-extensions>=3.7.4,<5;\
+          \ python_version<\"3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef train(\n        config_path: str,\n        input_dataset: dsl.Input[dsl.Dataset],\n\
+          \        input_transformer: dsl.Input[dsl.Artifact],\n        output_model:\
+          \ dsl.Output[dsl.Model],\n        kfp_metrics: dsl.Output[dsl.Metrics],\n\
+          \        override_n_estimators: int = 0,\n        override_max_depth: int\
+          \ = 0,\n        override_algorithm: str = \"\"\n):\n    \"\"\"\n    Conducts\
+          \ model training and exports trained model\n    :param config_path: Path\
+          \ to config file in Minio\n    :param input_dataset: Prepared dataset from\
+          \ previous pipeline step\n    :param output_model: Path to export model\
+          \ in joblib format\n    :param kfp_metrics: Output metrics for Kubeflow\
+          \ UI\n    \"\"\"\n    import pandas as pd\n    import yaml\n    from sklearn.model_selection\
+          \ import train_test_split\n    from sklearn.metrics import classification_report,\
+          \ confusion_matrix, recall_score, accuracy_score\n    import joblib\n  \
+          \  import os\n    import s3fs\n\n    storage_options = {\n        \"key\"\
+          : os.environ[\"S3_ACCESS_KEY\"],\n        \"secret\": os.environ[\"S3_SECRET_KEY\"\
+          ],\n        \"client_kwargs\": {\"endpoint_url\": os.environ[\"S3_ENDPOINT_URL\"\
+          ]},\n    }\n\n    # za\u0142adowanie konfiguracji\n    def _load_config(path:\
+          \ str) -> dict:\n        fs = s3fs.S3FileSystem(**storage_options)\n   \
+          \     with fs.open(path, 'r') as f:\n            config = yaml.safe_load(f)\n\
+          \        if override_n_estimators > 0:\n            config[\"train\"][\"\
+          n_estimators\"] = override_n_estimators\n            print(f\"Overridden\
+          \ n_estimators: {override_n_estimators}\")\n        if override_max_depth\
+          \ > 0:\n            config[\"train\"][\"max_depth\"] = override_max_depth\n\
+          \            print(f\"Overridden max_depth: {override_max_depth}\")\n  \
+          \      if override_algorithm != \"\":\n            config[\"train\"][\"\
+          algorithm\"] = override_algorithm\n            print(f\"Overridden algorithm:\
+          \ {override_algorithm}\")\n        return config\n\n    # podzia\u0142 danych\n\
+          \    def split_data(config: dict, data: pd.DataFrame):\n        print(\"\
+          Splitting data\")\n        X = data.drop([config[\"data\"][\"target_column\"\
+          ]], axis=1)\n        y = data[config[\"data\"][\"target_column\"]]\n\n \
+          \       X_train, X_test, y_train, y_test = train_test_split(\n         \
+          \   X, y,\n            test_size=config[\"train\"][\"test_size\"],\n   \
+          \         random_state=config[\"train\"][\"random_state\"]\n        )\n\
+          \        return X_train, X_test, y_train, y_test\n\n    # trening\n    def\
+          \ train_model(config: dict, X_train, y_train):\n        print(\"Starting\
+          \ training\")\n        algorithm = config[\"train\"][\"algorithm\"]\n  \
+          \      print(f\"using algorithm: {algorithm}\")\n\n        if algorithm\
+          \ == \"random_forest\":\n            from sklearn.ensemble import RandomForestClassifier\n\
+          \            model = RandomForestClassifier(\n                n_estimators=config[\"\
+          train\"][\"n_estimators\"],\n                max_depth=config[\"train\"\
+          ][\"max_depth\"],\n                class_weight=\"balanced\"\n         \
+          \   )\n        elif algorithm == \"xgboost\":\n            from xgboost\
+          \ import XGBClassifier\n            model = XGBClassifier(\n           \
+          \     scale_pos_weight=config[\"train\"][\"scale_pos_weight\"],\n      \
+          \      )\n        else:\n            print(f\"Algorithm {algorithm} not\
+          \ configured, using Logistic Regression fallback\")\n            from sklearn.linear_model\
+          \ import LogisticRegression\n            # U\u017Cywamy get() by unikn\u0105\
+          \u0107 KeyError je\u015Bli class_weight nie b\u0119dzie s\u0142ownikiem\n\
+          \            model = LogisticRegression(\n                class_weight=config[\"\
+          train\"].get(\"class_weight\", \"balanced\"),\n            )\n\n       \
+          \ try:\n            model.fit(X_train, y_train)\n        except ValueError\
+          \ as e:\n            print(\"Training failed - probably values weren't transformed\
+          \ - please check prepare step\")\n            raise e\n        print(\"\
+          Model trained\")\n        return model\n\n    # ewaluacja\n    def evaluate_model(config:\
+          \ dict, X_test, y_test, model):\n        from sklearn.pipeline import Pipeline\n\
+          \        y_pred = model.predict(X_test)\n\n        print(\"Classification\
+          \ report:\")\n        print(classification_report(y_test, y_pred))\n   \
+          \     print(\"Confusion matrix:\")\n        print(confusion_matrix(y_test,\
+          \ y_pred))\n\n        recall = recall_score(y_test, y_pred)\n        accuracy\
+          \ = accuracy_score(y_test, y_pred)\n\n        print(f\"recall={float(recall)}\"\
+          )\n        print(f\"accuracy={float(accuracy)}\")\n\n        # logowanie\
+          \ metryk do kubeflow ui\n        kfp_metrics.log_metric(\"recall\", float(recall))\n\
+          \        kfp_metrics.log_metric(\"accuracy\", float(accuracy))\n\n     \
+          \   min_recall = config[\"train\"][\"min_recall\"]\n        min_accuracy\
+          \ = config[\"train\"][\"min_accuracy\"]\n\n        if recall > min_recall\
+          \ and accuracy > min_accuracy:\n            print(f\"Accuracy over {min_accuracy}\
+          \ and Recall over {min_recall} - promoting model\")\n            os.makedirs(output_model.path,\
+          \ exist_ok=True)\n            file_path = os.path.join(output_model.path,\
+          \ \"model.joblib\")\n            transformer = joblib.load(input_transformer.path)\n\
+          \            full_pipeline = Pipeline([(\"preprocessor\", transformer),(\"\
+          predictor\", model)])\n            joblib.dump(full_pipeline, file_path)\n\
+          \            print(f\"Model saved to Kubeflow Artifact Store: {file_path}\"\
+          )\n        else:\n            error_msg = f\"Quality gate failed! Recall:\
+          \ {recall} < {min_recall} or Accuracy: {accuracy} < {min_accuracy}\"\n \
+          \           print(error_msg)\n            raise RuntimeError(error_msg)\n\
+          \n\n    print(\"Training process started\")\n    print(\"Loading config\"\
+          )\n    config = _load_config(config_path)\n\n    print(f\"Loading prepared\
+          \ data from Kubeflow Dataset: {input_dataset.path}\")\n    data = pd.read_parquet(input_dataset.path)\n\
+          \n    X_train, X_test, y_train, y_test = split_data(config, data)\n    model\
+          \ = train_model(config, X_train, y_train)\n    evaluate_model(config, X_test,\
+          \ y_test, model)\n    print(\"Training process finished successfully\")\n\
+          \n"
+        image: python:3.13
+pipelineInfo:
+  description: Pipeline for training classification model with optimized hiperparameters
+    using katib
+  name: hpo-pipeline
+root:
+  dag:
+    tasks:
+      prepare:
+        cachingOptions: {}
+        componentRef:
+          name: comp-prepare
+        inputs:
+          parameters:
+            config_path:
+              componentInputParameter: config_path
+        taskInfo:
+          name: prepare
+      run-katib-tuning:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-run-katib-tuning
+        dependentTasks:
+        - prepare
+        inputs:
+          artifacts:
+            dataset:
+              taskOutputArtifact:
+                outputArtifactKey: output_dataset
+                producerTask: prepare
+          parameters:
+            experiment_name:
+              runtimeValue:
+                constant: diabetes-tuning
+        taskInfo:
+          name: run-katib-tuning
+      train:
+        cachingOptions: {}
+        componentRef:
+          name: comp-train
+        dependentTasks:
+        - prepare
+        - run-katib-tuning
+        inputs:
+          artifacts:
+            input_dataset:
+              taskOutputArtifact:
+                outputArtifactKey: output_dataset
+                producerTask: prepare
+            input_transformer:
+              taskOutputArtifact:
+                outputArtifactKey: output_transformer
+                producerTask: prepare
+          parameters:
+            config_path:
+              componentInputParameter: config_path
+            override_algorithm:
+              componentInputParameter: pipeline_algorithm
+            override_max_depth:
+              taskOutputParameter:
+                outputParameterKey: best_max_depth
+                producerTask: run-katib-tuning
+            override_n_estimators:
+              taskOutputParameter:
+                outputParameterKey: best_n_estimators
+                producerTask: run-katib-tuning
+        taskInfo:
+          name: train
+  inputDefinitions:
+    parameters:
+      config_path:
+        defaultValue: s3://mlops-config/config.yaml
+        isOptional: true
+        parameterType: STRING
+      pipeline_algorithm:
+        defaultValue: ''
+        isOptional: true
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.16.0
+---
+platforms:
+  kubernetes:
+    deploymentSpec:
+      executors:
+        exec-prepare:
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: S3_ACCESS_KEY
+              secretKey: S3_ACCESS_KEY
+            - envVar: S3_SECRET_KEY
+              secretKey: S3_SECRET_KEY
+            - envVar: S3_ENDPOINT_URL
+              secretKey: S3_ENDPOINT_URL
+            optional: false
+            secretName: s3-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: s3-credentials
+        exec-run-katib-tuning:
+          podMetadata:
+            annotations:
+              sidecar.istio.io/inject: 'false'
+        exec-train:
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: S3_ACCESS_KEY
+              secretKey: S3_ACCESS_KEY
+            - envVar: S3_SECRET_KEY
+              secretKey: S3_SECRET_KEY
+            - envVar: S3_ENDPOINT_URL
+              secretKey: S3_ENDPOINT_URL
+            optional: false
+            secretName: s3-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: s3-credentials

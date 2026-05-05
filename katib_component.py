@@ -1,19 +1,19 @@
 from kfp.dsl import component
 from typing import NamedTuple
-
+from kfp import dsl
 
 @component(
-    base_image="python:3.13",
+    base_image="python:3.10",
     packages_to_install=["kubernetes"]
 )
 def run_katib_tuning(
-        dataset_uri: str,
+        dataset: dsl.Input[dsl.Dataset],
         experiment_name: str = "diabetes-hpo",
         namespace: str = "kubeflow"
 ) -> NamedTuple('Outputs', [('best_n_estimators', int), ('best_max_depth', int)]):
     from kubernetes import client, config
     import time
-
+    dataset_uri = dataset.uri
     config.load_incluster_config()
     api = client.CustomObjectsApi()
 
@@ -58,6 +58,7 @@ def run_katib_tuning(
                                     {
                                         "name": "training-container",
                                         "image": "localhost:32000/diabetes-train:latest",
+                                        "imagePullPolicy": "IfNotPresent",
                                         "command": [
                                             "python", "/app/train_script.py",
                                             "--config_path", "s3://mlops-config/config.yaml",

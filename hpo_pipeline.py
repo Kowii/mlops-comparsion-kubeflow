@@ -5,7 +5,7 @@ from kfp.dsl import pipeline
 from kfp import kubernetes
 @pipeline(
     name='hpo_pipeline',
-    description="Pipeline for training classification model with optimized hiperparameters using katip",
+    description="Pipeline for training classification model with optimized hiperparameters using katib",
 )
 def hpo_pipeline(
         config_path: str = "s3://mlops-config/config.yaml",
@@ -24,10 +24,10 @@ def hpo_pipeline(
 
     # etap trenowania modelu
     katib_task = katib_component.run_katib_tuning(
-        dataset_uri=data_prep_task.outputs['output_dataset'].uri,
+        dataset=data_prep_task.outputs['output_dataset'],
         experiment_name="diabetes-tuning"
     )
-    katib_task.add_pod_annotation(name="sidecar.istio.io/inject", value="false")
+    kubernetes.add_pod_annotation(task=katib_task, annotation_key="sidecar.istio.io/inject", annotation_value="false")
 
     model_train_task = train_component.train(
         config_path=config_path,
